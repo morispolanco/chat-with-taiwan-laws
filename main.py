@@ -1,32 +1,70 @@
 import os
 import streamlit as st
-
-from langchain.chains import RetrievalQAWithSourcesChain
+from streamlit_chat import message
+from langchain.chains import ConversationalRetrievalChain
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
+from langchain.memory import ConversationBufferMemory
+import openai
 
-# Variables de entorno
+# Configurar clave de API de OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Environment variables
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
 
-# Cargar embeddings y base de datos
+# Load embeddings and database
 embeddings = OpenAIEmbeddings()
 db = FAISS.load_local("faiss_index", embeddings)
 
-# Crear una cadena de recuperación con el modelo ChatOpenAI
-chain = RetrievalQAWithSourcesChain.from_chain_type(llm=ChatOpenAI(model_name=OPENAI_MODEL, temperature=0), chain_type="stuff", retriever=db.as_retriever(), max_tokens_limit=3500, reduce_k_below_max_tokens=True)
+llm = ChatOpenAI(model_name=OPENAI_MODEL, temperature=0)
+chain = ConversationalRetrievalChain.from_llm(
+    llm=llm,
+    memory=ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="answer"),
+    retriever=db.as_retriever(),
+    max_tokens_limit=3500,
+)
 
-# Campo de entrada y área de texto de Streamlit
-st.title("Preguntas y respuestas sobre leyes de Taiwán")
+st.set_page_config(
+    page_title="Chat with Taiwan Laws",
+    page_icon=":robot:"
+)
+
+st.title("台灣法規 Chat AI")
 st.markdown("""
 [![](https://img.shields.io/badge/tpai/chat_with_taiwan_laws-grey?style=flat-square&logo=github)](https://github.com/tpai/chat-with-taiwan-laws)
 """)
-# Bloque de descripción
 st.markdown("""
-Esta herramienta utiliza la [Base de Datos Nacional de Leyes de Taiwán](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=B0000001) que incluye las leyes civiles, la ley de procedimiento civil, la ley de ejecución del procedimiento civil, el código penal de la República de China, la ley de ejecución del código penal, la ley de procedimiento penal, la ley de ejecución del procedimiento penal, la ley de mantenimiento del orden social, el reglamento de tratamiento de casos de violación de la ley de mantenimiento del orden social, el reglamento de contacto entre tribunales locales y agencias de policía en el tratamiento de casos de violación de la ley de mantenimiento del orden social, la ley de prevención del acoso y hostigamiento, el reglamento de ejecución de la ley de prevención del acoso y hostigamiento, y el reglamento de ejecución de la orden de protección en casos de acoso y hostigamiento. Estos archivos son en formato PDF. Esta herramienta es solo para fines de investigación y aprendizaje. Si necesita asesoramiento legal, consulte a un abogado profesional.
+本工具引用自全國法規資料庫之[民法](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=B0000001)、[中華民國刑法](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=C0000001)、[刑事訴訟法](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=C0010001)、[勞動基準法](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=N0030001)、[勞工退休金條例](https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=N0030020)以及[職業安全衛生設施條例](https://law.moj.gov.tw/Hot/AddHotLaw.ashx?pcode=N0060009)之 PDF 檔案，本工具僅供研究和學習使用，如有法律需求請諮詢專業律師。
 """)
-question = st.text_input("Por favor, ingrese su pregunta:")
+
+if 'generated' not in st.session_state:
+    st.session_state['generated'] = []
+
+if 'past' not in st.session_state:
+    st.session_state['past'] = []
+
+if 'memory' not in st.session_state:
+    st.session_state['memory'] = ''
+
+def get_text():
+    input_text = st.text_input("請輸入對話：","你好", key="input")
+    return input_text 
+
+question = get_text()
+
 if question:
-    with st.spinner("🤖 Pensando, por favor espera..."):
-        output = chain({"question": f"{question} Por favor, responda en chino tradicional de Taiwán"}, return_only_outputs=True)
-    st.text_area("🤖:", value=output["answer"], height=200)
+    with st.spinner("🤖 對話生成中，請稍候..."):
+        humanMessage = question
+        output = chain({"question": f"對話紀錄：\n{st.session_state['memory']}\n---\n{humanMessage} 請用台灣繁體中文簡單回答"})
+        aiMessage = output["answer"]
+        st.session_state['memory'] += f"你: {humanMessage}\nAI: {aiMessage}\n"
+        print(output["question"])
+        st.session_state.past.append(question)
+        st.session_state.generated.append(aiMessage)
+
+if st.session_state['generated']:
+    for i in range(len(st.session_state['generated'])-1, -1, -1):
+        message(st.session_state["generated"][i], key=str(i))
+        message(st.session_state['past'][i], is_user=True, key=str(i) + '_user')
